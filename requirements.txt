@@ -19,3 +19,6 @@ numpy==2.5.4
 
 # Test framework
 pytest==9.1.1
+
+# Web UI for the interactive inference demo (src/app.py)
+streamlit==1.66.0
