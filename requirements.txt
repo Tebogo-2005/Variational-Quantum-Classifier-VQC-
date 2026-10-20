@@ -1,0 +1,21 @@
+# ---------------------------------------------------------------------------
+# Hybrid Quantum-Classical Loan Default Predictor
+#
+# Pinned, mutually compatible set (joint dependency resolution verified with
+# pip on Python 3.12). Requires Python >= 3.12 (binding constraint: numpy).
+# ---------------------------------------------------------------------------
+
+# Quantum circuit framework (pulls pennylane-lightning, autograd, rustworkx)
+pennylane==0.45.1
+
+# Classical ML: preprocessing, PCA, baselines, metrics
+scikit-learn==1.9.1
+
+# Tabular data handling
+pandas==3.0.6
+
+# Numerics (PennyLane's autograd interface wraps this via qml.numpy)
+numpy==2.5.4
+
+# Test framework
+pytest==9.1.1
