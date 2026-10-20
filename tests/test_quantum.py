@@ -9,7 +9,9 @@ Contracts under test:
 - ``variational_classifier`` adds the bias exactly and is differentiable
   (gradients match finite differences);
 - ``initialize_weights`` is seeded, bounded, and trainable;
-- end-to-end: angles from the data pipeline feed the circuit directly.
+- end-to-end: angles from the data pipeline feed the circuit directly;
+- output validation: the QNode returns a floating-point value strictly
+  bounded in (-1, 1) for dummy data (see ``TestQNodeOutputValidation``).
 """
 
 from __future__ import annotations
@@ -282,3 +284,65 @@ class TestDataPipelineIntegration:
         assert predicted in (-1, 1)
 
 
+# ---------------------------------------------------------------------------
+# Output validation: the quantum state must survive training intact
+# ---------------------------------------------------------------------------
+
+
+class TestQNodeOutputValidation:
+    """Guard the QNode's output contract with dummy data.
+
+    ``quantum_classifier`` is a Pauli-Z expectation value, so physics
+    guarantees it lies in [-1, 1]; these tests turn that guarantee into a
+    CI-enforced invariant (float type, strict interior bounds) so a broken
+    circuit, malformed readout, or bad input handling is caught before it
+    poisons a training run.
+    """
+
+    def test_output_is_floating_point(self) -> None:
+        weights = initialize_weights(2, seed=SEED)
+        x = np.array([0.3, 1.1, 2.0, 2.8])
+        output = quantum_classifier(weights, x)
+        # PennyLane returns a 0-D autograd tensor; its dtype must be a
+        # floating type and its value a finite real number.
+        assert np.issubdtype(np.asarray(output).dtype, np.floating)
+        assert np.isfinite(float(output))
+
+    def test_output_strictly_bounded_for_dummy_data(self) -> None:
+        # Random dummy weights and dummy features: the readout must land
+        # strictly inside (-1, 1) -- hitting a bound would indicate a
+        # degenerate state (pure |0> or |1>) or a broken observable.
+        rng = np.random.default_rng(SEED)
+        for n_layers in (1, 2, 3):
+            for _ in range(5):
+                weights = rng.uniform(-np.pi, np.pi, size=(n_layers, N_QUBITS, 3))
+                x = rng.uniform(0.0, np.pi, size=N_QUBITS)
+                output = float(quantum_classifier(weights, x))
+                assert -1.0 < output < 1.0, (
+                    f"<Z_0> escaped (-1, 1) with {n_layers} layers: {output}"
+                )
+
+    def test_output_bounded_at_input_extremes(self) -> None:
+        # Features pinned to the Bloch-sphere arc endpoints {0, pi} across
+        # many random circuits: the expectation may reach the boundary at
+        # exact eigenstates but must never leave [-1, 1] or go non-finite.
+        rng = np.random.default_rng(SEED)
+        for _ in range(10):
+            weights = rng.uniform(-np.pi, np.pi, size=(2, N_QUBITS, 3))
+            for extreme in (
+                np.zeros(N_QUBITS),
+                np.full(N_QUBITS, np.pi),
+                np.array([0.0, np.pi, 0.0, np.pi]),
+            ):
+                output = float(quantum_classifier(weights, extreme))
+                assert -1.0 <= output <= 1.0
+                assert np.isfinite(output)
+
+    def test_biased_wrapper_output_is_finite_float(self) -> None:
+        # The hybrid wrapper shifts the expectation by a classical bias;
+        # it must still be a finite floating-point scalar.
+        weights = initialize_weights(2, seed=SEED)
+        x = np.array([0.5, 1.0, 1.5, 2.5])
+        output = variational_classifier(weights, 0.25, x)
+        assert np.issubdtype(np.asarray(output).dtype, np.floating)
+        assert np.isfinite(float(output))

@@ -5,7 +5,9 @@ Contract under test:
 - CSV loading validates schema and target;
 - the preprocessor outputs exactly ``n_components`` angles in [0, pi];
 - ``get_loan_data`` returns {-1, +1} labels, stratified splits, and
-  correctly sized train batches.
+  correctly sized train batches;
+- quantum-interface validation: the pipeline's output width equals the
+  number of qubits consumed by the VQC (see ``TestQuantumInterfaceContract``).
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from src.data.pipeline import (
     load_loan_data,
     simulate_loan_data,
 )
+from src.models.quantum_vqc import N_QUBITS
 
 SEED = 7
 
@@ -238,3 +241,47 @@ class TestGetLoanData:
             get_loan_data(csv_path=csv_path)
 
 
+# ---------------------------------------------------------------------------
+# Quantum-interface validation: shapes must match the qubit budget
+# ---------------------------------------------------------------------------
+
+
+class TestQuantumInterfaceContract:
+    """Guard the pipeline -> circuit shape contract.
+
+    The data re-uploading circuit consumes exactly one rotation angle per
+    qubit (``N_QUBITS``), so every feature matrix the pipeline emits must
+    have exactly that column count. A regression here would make the QNode
+    raise (or worse, silently reshape) during training.
+    """
+
+    def test_split_feature_width_equals_qubit_count(self) -> None:
+        data = get_loan_data(batch_size=32, n_samples=200, random_state=SEED)
+        assert data.X_train.shape == (data.n_train, N_QUBITS)
+        assert data.X_test.shape == (data.n_test, N_QUBITS)
+        assert N_QUBITS == 4  # lock the canonical qubit budget
+
+    def test_preprocessor_output_width_equals_qubit_count(self) -> None:
+        frame = simulate_loan_data(n_samples=200, random_state=SEED)
+        angles = LoanPreprocessor(n_components=N_QUBITS).fit_transform(frame)
+        assert angles.shape == (len(frame), N_QUBITS)
+
+    def test_batch_feature_width_equals_qubit_count(self) -> None:
+        data = get_loan_data(batch_size=16, n_samples=100, random_state=SEED)
+        assert data.train_batches, "expected at least one training batch"
+        for X_batch, _ in data.train_batches:
+            assert X_batch.shape[1] == N_QUBITS
+
+    def test_angle_dtype_is_floating_point(self) -> None:
+        data = get_loan_data(batch_size=8, n_samples=100, random_state=SEED)
+        for matrix in (data.X_train, data.X_test):
+            assert np.issubdtype(matrix.dtype, np.floating)
+            assert np.isfinite(matrix).all()
+
+    def test_angles_are_valid_bloch_rotations(self) -> None:
+        # Every emitted angle must be a usable RY rotation angle: finite
+        # and within the inclusive [0, pi] Bloch-sphere arc.
+        data = get_loan_data(batch_size=8, n_samples=100, random_state=SEED)
+        for matrix in (data.X_train, data.X_test):
+            assert matrix.min() >= 0.0
+            assert matrix.max() <= np.pi
